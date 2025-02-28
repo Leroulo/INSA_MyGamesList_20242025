@@ -1,6 +1,6 @@
 package com.insa.mygamelist
 
-import android.graphics.drawable.Icon
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -16,14 +16,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.Icon
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -37,6 +34,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
@@ -69,14 +67,21 @@ class MainActivity : ComponentActivity() {
 
 sealed class Screen(val route: String) {
     data object Home : Screen("home")
-    data object Details : Screen("details/{gameId}/{gameName}") {
-        fun createRoute(gameId: Int, gameName: String) = "details/$gameId/$gameName"
+    data object Details : Screen("details/{gameId}/{gameName}/{gameCover}/{gameGenres}/{gamePlatformes}/{gameResume}") {
+        fun createRoute(gameId: Int, gameName: String, gameCover: Long, gameGenres: List<Long>, gamePlatformes: List<Int>, gameResume: String): String {
+            val genresString = gameGenres.joinToString(",") { it.toString() }
+            val platformsString = gamePlatformes.joinToString(",") { it.toString() }
+
+            return "details/$gameId/${Uri.encode(gameName)}/$gameCover/${Uri.encode(genresString)}/${Uri.encode(platformsString)}/${Uri.encode(gameResume)}"
+        }
+
     }
+
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeScreen(onNavigateToDetails: (Int, String) -> Unit, navController: NavController) {
+fun HomeScreen(onNavigateToDetails: (Int, String, Long, List<Long>, List<Int>, String) -> Unit, navController: NavController) {
     Scaffold(
         topBar = {
             TopAppBar(
@@ -84,13 +89,11 @@ fun HomeScreen(onNavigateToDetails: (Int, String) -> Unit, navController: NavCon
                     containerColor = Color(0xfffb8c00),
                     titleContentColor = Color.Black,
                 ),
-
-                    title = {
-                        Row() {
-                            IconButton(onClick = { navController.navigateUp()}) {
-                            }
-                            Text("My Games List", fontWeight = FontWeight.Bold,modifier = Modifier.padding(start = 60.dp))
-                        }
+                title = {
+                    Row {
+                        IconButton(onClick = { navController.navigateUp() }) { }
+                        Text("My Games List", fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 60.dp))
+                    }
                 }
             )
         },
@@ -101,7 +104,9 @@ fun HomeScreen(onNavigateToDetails: (Int, String) -> Unit, navController: NavCon
                     .padding(innerPadding)
             ) {
                 items(IGDB.games) { game ->
-                    Element(game = game, onClick = { onNavigateToDetails(game.id, game.name) })
+                    Element(game = game, onClick = {
+                        onNavigateToDetails(game.id, game.name, game.cover, game.genres, game.platforms, game.summary)
+                    })
                 }
             }
         }
@@ -110,7 +115,7 @@ fun HomeScreen(onNavigateToDetails: (Int, String) -> Unit, navController: NavCon
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DetailsScreen(gameId: Int, gameName: String) {
+fun DetailsScreen(gameId: Int, gameName: String, gameCover: Long, gameGenres: List<Long>, gamePlatformes: List<Int>, gameResume: String) {
     Scaffold(
         topBar = {
             TopAppBar(
@@ -129,13 +134,45 @@ fun DetailsScreen(gameId: Int, gameName: String) {
             )
         },
         content = { innerPadding ->
-            Box(modifier = Modifier.padding(innerPadding)) {
-                Text("Game ID: $gameId")
-            }
-        }
-    )
-}
+                Column(modifier = Modifier.padding(innerPadding).fillMaxWidth(),horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            "$gameName",
+                            fontWeight = FontWeight.Bold,
+                            textDecoration = TextDecoration.Underline,
+                            modifier = Modifier.padding(vertical = 30.dp),
+                            fontSize = 20.sp,
+                        )
+                    AsyncImage(
+                        model = "https:" + IGDB.covers.find { it.id == gameCover }?.url,
+                        contentDescription = null,
+                        modifier = Modifier
+                            .height(300.dp)
+                    )
+                    var listGenre: String = ""
+                    for (id in gameGenres) {
+                        val genre: String? = IGDB.genres.find { it.id == id }?.name
+                        genre?.let {
+                            if (listGenre == "") {
+                                listGenre += genre
+                            } else {
+                                listGenre += ",$genre"
+                            }
+                        }
+                    }
+                    Text(listGenre,
+                         fontSize = 12.sp,
+                         fontWeight = FontWeight.Bold,
+                         color = Color.DarkGray)
+                    LazyRow (modifier = Modifier.padding(innerPadding)){
+                        items(...){ logo -> }
+                    }
+                    Text("$gameResume",
+                            modifier = Modifier.padding(12.dp))
 
+                }
+            }
+        )
+    }
 @Composable
 fun Element(game: Game, onClick: () -> Unit) {
     Box(
@@ -190,14 +227,30 @@ fun Element(game: Game, onClick: () -> Unit) {
 fun AppNavHost(navController: NavHostController, modifier: Modifier) {
     NavHost(navController = navController, startDestination = Screen.Home.route) {
         composable(Screen.Home.route) {
-            HomeScreen(onNavigateToDetails = { gameId, gameName ->
-                navController.navigate(Screen.Details.createRoute(gameId, gameName))
-            },navController)
+            HomeScreen(
+                onNavigateToDetails = { gameId, gameName, gameCover, gameGenres, gamePlatformes, gameResume ->
+                    navController.navigate(Screen.Details.createRoute(gameId, gameName, gameCover, gameGenres, gamePlatformes, gameResume))
+                },
+                navController = navController
+            )
+
         }
         composable(Screen.Details.route) { backStackEntry ->
             val gameId = backStackEntry.arguments?.getString("gameId")?.toIntOrNull() ?: 0
-            val gameName = backStackEntry.arguments?.getString("gameName") ?: ""
-            DetailsScreen(gameId, gameName)
+            val gameName = backStackEntry.arguments?.getString("gameName")?.let { Uri.decode(it) } ?: ""
+            val gameResume = backStackEntry.arguments?.getString("gameResume")?.let { Uri.decode(it) } ?: ""
+            val gameCover = backStackEntry.arguments?.getString("gameCover")?.toLongOrNull() ?: 0L
+
+            val gameGenres = backStackEntry.arguments?.getString("gameGenres")?.let { Uri.decode(it) }
+                ?.split(",")?.mapNotNull { it.toLongOrNull() } ?: emptyList()
+
+            val gamePlatformes = backStackEntry.arguments?.getString("gamePlatformes")?.let { Uri.decode(it) }
+                ?.split(",")?.mapNotNull { it.toIntOrNull() } ?: emptyList()
+
+            DetailsScreen(gameId, gameName, gameCover, gameGenres, gamePlatformes, gameResume)
         }
+
+
+
     }
 }
