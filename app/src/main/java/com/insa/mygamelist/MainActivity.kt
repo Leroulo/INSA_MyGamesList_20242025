@@ -8,7 +8,6 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.scrollable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 
@@ -17,6 +16,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -27,7 +28,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -35,8 +35,10 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.TopAppBarDefaults.topAppBarColors
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -46,6 +48,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
@@ -64,7 +67,6 @@ import com.insa.mygamelist.ui.theme.MyGamesListTheme
 
 
 class MainActivity : ComponentActivity() {
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         IGDB.load(this)
@@ -72,10 +74,20 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val navController = rememberNavController()
+            val favoriteGames = rememberSaveable { mutableStateOf(mutableSetOf<Int>()) }
+            val searchQuery = rememberSaveable { mutableStateOf("") }
+            val isSearching = rememberSaveable { mutableStateOf(false) }
             MyGamesListTheme {
                 Box(modifier = Modifier.fillMaxSize()) {
-                    AppNavHost(navController)
-                }
+                    AppNavHost(
+                        navController = navController,
+                        favoriteGames = favoriteGames,
+                        searchQuery = searchQuery.value,
+                        isSearching = isSearching.value,
+                        onSearchUpdate = { query, searching ->
+                            searchQuery.value = query
+                            isSearching.value = searching
+                })
             }
         }
     }
@@ -96,11 +108,12 @@ sealed class Screen(val route: String) {
 @Composable
 fun HomeScreen(
     navController: NavController,
-    onNavigateToDetails: (Int, String, Long, List<Long>, List<Int>, String) -> Unit
+    onNavigateToDetails: (Int, String, Long, List<Long>, List<Int>, String) -> Unit,
+    favoriteGames: MutableState<MutableSet<Int>>,
+    searchQuery: String,
+    isSearching: Boolean,
+    onSearchUpdate: (String, Boolean) -> Unit
 ) {
-    var searchQuery by rememberSaveable { mutableStateOf("") }
-    var isSearching by remember { mutableStateOf(false) }
-
     val filteredGames = IGDB.games.filter { game ->
         game.name.contains(searchQuery, ignoreCase = true) ||
                 game.genres.any { IGDB.genres.find { g -> g.id == it }?.name?.contains(searchQuery, ignoreCase = true) == true } ||
@@ -118,7 +131,7 @@ fun HomeScreen(
                     if (isSearching) {
                         TextField(
                             value = searchQuery,
-                            onValueChange = { searchQuery = it },
+                            onValueChange = { onSearchUpdate(it, true) },
                             placeholder = { Text("Rechercher un jeu...") },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth()
@@ -128,7 +141,7 @@ fun HomeScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = { isSearching = !isSearching }) {
+                    IconButton(onClick = { onSearchUpdate(searchQuery, !isSearching) }) {
                         Icon(
                             imageVector = if (isSearching) Icons.Default.Close else Icons.Default.Search,
                             contentDescription = if (isSearching) "Fermer la recherche" else "Rechercher"
@@ -151,14 +164,13 @@ fun HomeScreen(
                     items(filteredGames) { game ->
                         Element(game = game, onClick = {
                             onNavigateToDetails(game.id, game.name, game.cover, game.genres, game.platforms, game.summary)
-                        })
+                        }, favoriteGames)
                     }
                 }
             }
         }
     )
 }
-
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -169,7 +181,8 @@ fun DetailsScreen(
     gameGenres: List<Long>,
     gamePlatformes: List<Int>,
     gameResume: String,
-    navController: NavController
+    navController: NavController,
+    favoriteGames: MutableState<MutableSet<Int>>
 ) {
     Scaffold(
         topBar = {
@@ -188,9 +201,19 @@ fun DetailsScreen(
                 },
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
-                        Icon(
-                            imageVector = Icons.Default.ArrowBack,
-                            contentDescription = "Retour"
+                        Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Retour")
+                    }
+                },
+                actions = {
+                    val isFavorite = favoriteGames.value.contains(gameId)
+                    IconButton(onClick = {
+                        favoriteGames.value = favoriteGames.value.toMutableSet().apply {
+                            if (isFavorite) remove(gameId) else add(gameId)
+                        }
+                    }) {
+                        Image(
+                            painter = painterResource(if (isFavorite) R.drawable.baseline_star_24 else R.drawable.baseline_star_border_24),
+                            contentDescription = "Toggle Favorite"
                         )
                     }
                 }
@@ -208,11 +231,37 @@ fun DetailsScreen(
                     modifier = Modifier.padding(vertical = 30.dp),
                     fontSize = 20.sp
                 )
+
                 AsyncImage(
                     model = "https:" + IGDB.covers.find { it.id == gameCover }?.url,
                     contentDescription = null,
                     modifier = Modifier.height(300.dp)
                 )
+
+                val listLogo = mutableListOf<String?>()
+                for (id in gamePlatformes) {
+                    val idLogo: Int? = IGDB.platforms.find { it.id.toInt() == id }?.nb_logo;
+                    idLogo?.let {
+                        listLogo.add(IGDB.platform_logos.find { it.id.toInt() == idLogo }?.url)
+                    }
+                }
+
+                LazyRow(
+                    modifier = Modifier.padding(all = 20.dp).height(100.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    items(listLogo) { logo ->
+                        AsyncImage(
+                            model = "https:" + logo,
+                            contentDescription = null,
+                            modifier = Modifier.width(100.dp)
+                                .padding(10.dp)
+                                .wrapContentHeight(),
+                            contentScale = ContentScale.Fit
+                        )
+                    }
+                }
+
                 val listGenre = gameGenres.joinToString(", ") { id ->
                     IGDB.genres.find { it.id == id }?.name ?: ""
                 }
@@ -222,6 +271,7 @@ fun DetailsScreen(
                     fontWeight = FontWeight.Bold,
                     color = Color.DarkGray
                 )
+
                 Text(
                     text = gameResume,
                     modifier = Modifier.padding(12.dp).verticalScroll(rememberScrollState())
@@ -231,8 +281,11 @@ fun DetailsScreen(
     )
 }
 
+
 @Composable
-fun Element(game: Game, onClick: () -> Unit) {
+fun Element(game: Game, onClick: () -> Unit, favoriteGames: MutableState<MutableSet<Int>>) {
+    val isFavorite = favoriteGames.value.contains(game.id)
+
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -250,7 +303,7 @@ fun Element(game: Game, onClick: () -> Unit) {
                     .height(80.dp)
                     .padding(10.dp)
             )
-            Column (modifier = Modifier.weight(1f)){
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = game.name,
                     fontWeight = FontWeight.Bold,
@@ -269,14 +322,13 @@ fun Element(game: Game, onClick: () -> Unit) {
                     overflow = TextOverflow.Ellipsis
                 )
             }
-            IconButton() {
+            IconButton(onClick = {
+                favoriteGames.value = favoriteGames.value.toMutableSet().apply {
+                    if (isFavorite) remove(game.id) else add(game.id)
+                }
+            }) {
                 Image(
-                    painter = painterResource(R.drawable.baseline_star_24),
-                    contentDescription = null,
-                    modifier = Modifier.padding(10.dp)
-                )
-                Image(
-                    painter = painterResource(R.drawable.baseline_star_border_24),
+                    painter = painterResource(if (isFavorite) R.drawable.baseline_star_24 else R.drawable.baseline_star_border_24),
                     contentDescription = null,
                     modifier = Modifier.padding(10.dp)
                 )
@@ -286,14 +338,24 @@ fun Element(game: Game, onClick: () -> Unit) {
 }
 
 @Composable
-fun AppNavHost(navController: NavHostController) {
+fun AppNavHost(
+    navController: NavHostController,
+    favoriteGames: MutableState<MutableSet<Int>>,
+    searchQuery: String,
+    isSearching: Boolean,
+    onSearchUpdate: (String, Boolean) -> Unit
+) {
     NavHost(navController = navController, startDestination = Screen.Home.route) {
         composable(Screen.Home.route) {
             HomeScreen(
                 navController = navController,
                 onNavigateToDetails = { gameId, gameName, gameCover, gameGenres, gamePlatformes, gameResume ->
                     navController.navigate(Screen.Details.createRoute(gameId, gameName, gameCover, gameGenres, gamePlatformes, gameResume))
-                }
+                },
+                favoriteGames = favoriteGames,
+                searchQuery = searchQuery,
+                isSearching = isSearching,
+                onSearchUpdate = onSearchUpdate
             )
         }
         composable(Screen.Details.route) { backStackEntry ->
@@ -304,7 +366,7 @@ fun AppNavHost(navController: NavHostController) {
             val gameGenres = backStackEntry.arguments?.getString("gameGenres")?.split(",")?.mapNotNull { it.toLongOrNull() } ?: emptyList()
             val gamePlatformes = backStackEntry.arguments?.getString("gamePlatformes")?.split(",")?.mapNotNull { it.toIntOrNull() } ?: emptyList()
 
-            DetailsScreen(gameId, gameName, gameCover, gameGenres, gamePlatformes, gameResume, navController)
+            DetailsScreen(gameId, gameName, gameCover, gameGenres, gamePlatformes, gameResume, navController, favoriteGames)
         }
     }
-}
+}}
